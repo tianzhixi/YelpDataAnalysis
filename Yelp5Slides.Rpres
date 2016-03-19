@@ -1,0 +1,89 @@
+Yelp Data Analysis on Finding Factors that Influence Business Ratings
+========================================================
+author: Tianzhixi Yin
+date: 11/21/2015
+
+Summary
+========================================================
+
+Primary question: what factors influence the rating of a business?
+
+- A predictive model for *stars*
+- Word Clouds
+
+
+Predictive Model
+========================================================
+A predictive model for *stars* with *categories*, *state*, *city*, *neighborhoods*, and *review_count* as predictors using Boosting.
+
+```{r, cache=TRUE, echo=FALSE, figs.only=FALSE}
+business <- readRDS("business.RDS")
+require(gbm)
+x <- 1:61184
+set.seed(300)
+xs <- sample(x, size=400, replace = FALSE, prob = NULL)
+businessSample <- business[xs, c(6,7,11,12,16,17)]
+
+# colnames(businessSample)
+
+businessSample$city <- as.factor(businessSample$city)
+businessSample$state <- as.factor(businessSample$state)
+businessSample$newnei <- as.factor(businessSample$newnei)
+
+set.seed(300)
+train = sample(1:nrow(businessSample), 250)
+
+boost.business = gbm(stars ~ ., data = businessSample[train, ], distribution = "gaussian", 
+                   n.trees = 100, shrinkage = 0.01, interaction.depth = 4)
+pred = predict(boost.business, newdata = businessSample[-train, ], n.trees = 100)
+boost.business
+```
+
+The mean prediction error is:
+
+```{r, echo=FALSE}
+mean((pred - businessSample[-train, ]$stars)^2)
+```
+
+Word Cloud
+========================================================
+
+Word cloud of the 1 star ratings.
+
+```{r, echo=FALSE, cache=TRUE}
+library(tm)
+library(wordcloud)
+review <- readRDS("review.RDS")
+x <- 1:1569264
+set.seed(3000)
+xs <- sample(x, size=2000, replace = FALSE, prob = NULL)
+reviewSample <- review[xs, ]
+
+star1 <- reviewSample[reviewSample$stars == 1, "text"]
+
+star1_text <- paste(star1, collapse=" ")
+star1_source <- VectorSource(star1_text)
+
+corpus1 <- Corpus(star1_source)
+corpus1 <- tm_map(corpus1, content_transformer(tolower))
+corpus1 <- tm_map(corpus1, removePunctuation)
+corpus1 <- tm_map(corpus1, stripWhitespace)
+corpus1 <- tm_map(corpus1, removeWords, stopwords("english"))
+
+dtm1 <- DocumentTermMatrix(corpus1)
+dtm1 <- as.matrix(dtm1)
+frequency1 <- colSums(dtm1)
+frequency1 <- sort(frequency1, decreasing=TRUE)
+
+dark2 <- brewer.pal(6, "Dark2")
+set.seed(300)
+wordcloud(names(frequency1), frequency1, max.words=50, rot.per=0.2, colors=dark2)  
+```
+
+Conclution
+========================================================
+
+- People in different cities and neighborhoods tend to give different ratings.
+- Various attributes of a business could be important. (For example, by appointments only or not, the noise level.)
+- Food quality, waiting time and service provided are always what customers care most about
+
