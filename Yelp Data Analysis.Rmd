@@ -1,0 +1,224 @@
+---
+title: "Yelp Data Analysis"
+author: "Tianzhixi Yin"
+date: "November 21, 2015"
+output: pdf_document
+---
+
+```{r, echo=FALSE, cache=TRUE}
+business <- readRDS("business.RDS")
+review <- readRDS("review.RDS")
+user <- readRDS("user.RDS")
+tip <- readRDS("tip.RDS")
+checkin <- readRDS("checkin.RDS")
+```
+
+## Title
+I investigated three of the five datasets (**business**, **review**, and **tip**) to answer my primary question. I did some exploratory data analysis. I built a predictive model for *stars*. I did some text mining to find out what customers are talking about frequently in their comments.
+
+## Introduction
+My primary question is: what factors influence the rating of a business? In the **business** data, there are several predictor variables that might affect the rating of a business, therefore I built a predictive model using these variables and evaluated the predicting power of this model. For **review** and **tip** datasets, I focused on the *text* data and utilized some text mining techniques to plot word clouds for discovering what customers care about most.
+
+## Methods and Data 
+First I check the distribution of the stars of businesses.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(tm)
+require(gbm)
+library(wordcloud)
+```
+
+```{r, echo=FALSE, fig.height=4}
+qplot(factor(stars), data=business, geom="bar", fill=factor(stars))
+```
+
+The stars are normally distributed with a negative skew. The columns in **business** are:
+
+```{r, echo=FALSE}
+colnames(business)
+```
+
+I do not think the id, address, hours, name, latitude and longitude of a business will have great impact on the ratings. For whether a business is still running or not, I do not want to include it in my predictive model because it will not help a business to improve.
+
+I think that *categories*, *state*, *city*, *neighborhoods*, and *review_count* could be contributing to the rating of a business. I decide to use boosting to build a predictive model for *stars*. Since the original **business** dataset is huge, I randomly select a smaller subset of this dataset (400 observations). I need to transform *neighborhoods* into a character variable. Also, I need to create a new variable for *categories*, to let an individual business have only one category which belongs to the major 23 categories given by Yelp. I randomly select 250 observation for model building, the other 150 observations are left for validation.
+
+Boosting is a supervised machine learning algorithm for reducing bias and variance. It is developed upon the tree-based methods and is one of the ensemble methods. The trees in boosting are grown sequentially: each tree is grown using information from previously grown trees.
+
+```{r, echo=FALSE}
+# list <- c('Active Life', 'Arts & Entertainment', 'Automotive', "Beauty & Spas", "Education", "Event Planning & Services", 
+#           "Financial Services", "Food", "Health & Medical", "Home Services" , "Hotels & Travel", "Local Flavor", 
+#           "Local Services", "Mass Media", "Nightlife", "Pets", "Professional Services", "Public Services & Government", 
+#           "Real Estate", "Religious Organizations", "Restaurants", "Shopping", "Others")
+# 
+# business$nc <- 0
+# for (i in seq_along(list)) {
+#   x <- grepl(list[[i]], business$categories)
+#   business$nc <- ifelse(x == TRUE, i, business$nc)
+# }
+# 
+# business$nn <- as.character(business$neighborhoods)
+
+x <- 1:61184
+set.seed(300)
+xs <- sample(x, size=400, replace = FALSE, prob = NULL)
+businessSample <- business[xs, c(6,7,11,12,16,17)]
+
+# colnames(businessSample)
+
+businessSample$city <- as.factor(businessSample$city)
+businessSample$state <- as.factor(businessSample$state)
+businessSample$newnei <- as.factor(businessSample$newnei)
+
+set.seed(300)
+train = sample(1:nrow(businessSample), 250)
+
+boost.business = gbm(stars ~ ., data = businessSample[train, ], distribution = "gaussian", 
+                   n.trees = 100, shrinkage = 0.01, interaction.depth = 4)
+```
+
+The *attributes* variables contain a lot of information. Most of them are binary variables simply saying whether a certain condition is true or not. I decide to compare the ratings for businesses in the two categories for each binary attribue. (Here I only show a few examples due to limited space.) Since the distribution of *stars* is not strictly normal, I use Mann-Whitney U test, which is a nonparametric test for testing the difference between two groups. If the p-value of the test is less than 0.05, we would say this factor has a significant effect on rating. For the attributes that are not binary, I also investigate some. (I only present one boxplot example to illustrate my approach.)
+
+For **review** and **tip** datasets, I mainly utilize the *text* data for text mining. I decide to plot word clouds for 1 star businesses and 5 star businesses, and see what people mention most in these two different cases. Those words should indicate the aspects that affect the ratings for businesses.
+
+
+## Results 
+```{r, echo=FALSE, fig.height=3}
+summary(boost.business)
+pred = predict(boost.business, newdata = businessSample[-train, ], n.trees = 100)
+```
+
+The boosting model reveals the relative influence of the variables. We can see *city* has the greatest influence on rating, then *neiborghhood*. *category* and *review_count* have small influence, while *state* makes absolutely no impact on ratings.
+
+```{r, echo=FALSE}
+mean((pred - businessSample[-train, ]$stars)^2)
+```
+
+The mean prediction error is $0.77$, which I think is acceptable, especially considering the small sample size that I use. For the binary *attributes*, a few examples are shown below from the Mann-Whitney U test. we can see *By Appointment Only*, *Happy Hour*, and *Good For Groups* make a difference in ratings while *Delivery* is not that important.
+
+Variables  | p-value
+------------- | -------------
+*By Appointment Only*   | < 2.2e-16
+*Happy Hour*      | 9.805e-11 
+*Good For Groups*    | 1.16e-10
+*Delivery*        | 0.08402
+
+*By Appointment Only*  | Mean Star
+------------- | -------------
+Yes   | 4.097
+No     | 3.823 
+
+```{r, echo=FALSE, fig.height=3}
+# business$WiFi <- as.factor(business$attributes[, "Wi-Fi"])
+# qplot(stars, ..density.., data=business, geom="density", fill=WiFi, position="stack")
+business$Noise <- as.factor(business$attributes[, "Noise Level"])
+ggplot(business, aes(x = Noise, y = stars)) +
+  geom_boxplot(fill = "grey80", colour = "blue") +
+  scale_x_discrete() + xlab("Noise Level") +
+  ylab("Stars")
+```
+
+This boxplot shows that very loud noise leads to a lower rating generally than other levels of noise.
+
+### 1 Star Word Cloud
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3}
+x <- 1:1569264
+set.seed(3000)
+xs <- sample(x, size=2000, replace = FALSE, prob = NULL)
+reviewSample <- review[xs, ]
+
+star1 <- reviewSample[reviewSample$stars == 1, "text"]
+star5 <- reviewSample[reviewSample$stars == 5, "text"]
+
+star1_text <- paste(star1, collapse=" ")
+star1_source <- VectorSource(star1_text)
+
+star5_text <- paste(star5, collapse=" ")
+star5_source <- VectorSource(star5_text)
+
+corpus1 <- Corpus(star1_source)
+corpus1 <- tm_map(corpus1, content_transformer(tolower))
+corpus1 <- tm_map(corpus1, removePunctuation)
+corpus1 <- tm_map(corpus1, stripWhitespace)
+# ptm <- proc.time()
+corpus1 <- tm_map(corpus1, removeWords, stopwords("english"))
+# proc.time() - ptm
+
+dtm1 <- DocumentTermMatrix(corpus1)
+dtm1 <- as.matrix(dtm1)
+frequency1 <- colSums(dtm1)
+frequency1 <- sort(frequency1, decreasing=TRUE)
+# head(frequency1)
+
+dark2 <- brewer.pal(6, "Dark2")
+set.seed(300)
+wordcloud(names(frequency1), frequency1, max.words=50, rot.per=0.2, colors=dark2)  
+```
+
+The word cloud for 1 star ratings shows that poor food quality, long waiting time, and bad service are usually what lead to
+low ratings.
+
+### 5 Star Word Cloud
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3}
+corpus5 <- Corpus(star5_source)
+corpus5 <- tm_map(corpus5, content_transformer(tolower))
+corpus5 <- tm_map(corpus5, removePunctuation)
+corpus5 <- tm_map(corpus5, stripWhitespace)
+# ptm <- proc.time()
+corpus5 <- tm_map(corpus5, removeWords, stopwords("english"))
+# proc.time() - ptm
+
+dtm5 <- DocumentTermMatrix(corpus5)
+dtm5 <- as.matrix(dtm5)
+frequency5 <- colSums(dtm5)
+frequency5 <- sort(frequency5, decreasing=TRUE)
+# head(frequency5)
+
+set.seed(300)
+wordcloud(names(frequency5), frequency5, max.words=50, rot.per=0.2, colors=dark2)  
+```
+
+The word cloud for 5 star ratings are quite similar to the 1 star, but with more complimentary words. We can see that people also care about the food, the waiting time and the staff being friendly. Some people mention that they will be back.
+
+### Tip Word Cloud
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=3}
+x <- 1:495107
+set.seed(3000)
+xs <- sample(x, size=10000, replace = FALSE, prob = NULL)
+tipSample <- tip[xs, ]
+
+
+tip_text <- paste(tipSample, collapse=" ")
+tip_source <- VectorSource(tip_text)
+
+corpus <- Corpus(tip_source)
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, removeWords, c("tip")) 
+
+dtm <- DocumentTermMatrix(corpus)
+dtm2 <- as.matrix(dtm)
+frequency <- colSums(dtm2)
+frequency <- sort(frequency, decreasing=TRUE)
+# head(frequency)
+
+set.seed(300)
+wordcloud(names(frequency), frequency, max.words=100, rot.per=0.2, colors=dark2)
+```
+
+The word cloud for **tip** is pretty much the same as the previous two, with a lot of complimentary comments. I guess people like to give tips when they find out a good place.
+
+
+## Discussion 
+Since I only use a small subset of the whole data, I would not say that my findings are flawless. But at least they are decent enough for me to have some initial ideas about what influence the ratings of businesses. If I need to write a longer, more detailed report, I could follow my approaches here.
+
+I believe my analysis has answered my primary question of interest adequately. I find out that people in different cities and neighborhoods tend to give different ratings. Moreover, various attributes of a business could be important, for example, places "By Appointment Only" have higher ratings than those don't require appointments and very loud noise will lead to low stars. By looking into the comments, I also realize that food quality, waiting time and service provided are always what customers care most about. Doing bad in these categories will result in bad ratings while performing well earns praises and recommendation.
+
+
+
+
